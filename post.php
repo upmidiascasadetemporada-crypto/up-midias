@@ -1,253 +1,169 @@
 <?php
-// post.php
-// Painel de criação/edição/exclusão de posts (autossuficiente com SQLite)
-session_start();
-
-// Segurança: exige login
-if (empty($_SESSION['admin_logged_in'])) {
-    header('Location: adm.php');
-    exit;
-}
+// post.php - página pública com listagem de anúncios e modais de detalhes
+// Não exige login
 
 $dbDir = __DIR__ . '/data';
 $dbFile = $dbDir . '/db.sqlite';
 $uploadsDir = __DIR__ . '/uploads';
-$maxUploadSize = 8 * 1024 * 1024; // 8MB por arquivo (ajuste se quiser)
+$wa_number = '557399311340'; // WhatsApp: +55 73 99311-340
 
-// garantir diretórios
 if (!is_dir($dbDir)) mkdir($dbDir, 0777, true);
 if (!is_dir($uploadsDir)) mkdir($uploadsDir, 0777, true);
 
-// conexão PDO
-$pdo = new PDO('sqlite:' . $dbFile);
-$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+try {
+    $pdo = new PDO('sqlite:' . $dbFile);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-// garante tabela (poderia já existir via adm.php init)
-$pdo->exec("
-CREATE TABLE IF NOT EXISTS posts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  title TEXT,
-  location TEXT,
-  price TEXT,
-  description TEXT,
-  images TEXT,
-  created_at TEXT
-);
-");
-
-// Função auxiliar para salvar uploads multiple -> retorna array de paths
-function handleUploads($fieldName, $uploadsDir, $maxUploadSize) {
-    $saved = [];
-    if (empty($_FILES[$fieldName]) || !is_array($_FILES[$fieldName]['name'])) return $saved;
-
-    for ($i = 0; $i < count($_FILES[$fieldName]['name']); $i++) {
-        $error = $_FILES[$fieldName]['error'][$i];
-        if ($error !== UPLOAD_ERR_OK) continue;
-        $tmp = $_FILES[$fieldName]['tmp_name'][$i];
-        $origName = basename($_FILES[$fieldName]['name'][$i]);
-        $size = $_FILES[$fieldName]['size'][$i];
-        if ($size > $maxUploadSize) continue;
-        // simples sanitização do nome
-        $safe = preg_replace('/[^a-zA-Z0-9._-]/', '_', $origName);
-        $finalName = time() . '_' . bin2hex(random_bytes(6)) . '_' . $safe;
-        $dest = $uploadsDir . '/' . $finalName;
-        if (move_uploaded_file($tmp, $dest)) {
-            // grava caminho relativo para uso no site (./uploads/...)
-            $saved[] = 'uploads/' . $finalName;
-        }
-    }
-    return $saved;
+    // garante tabela caso ainda não exista
+    $pdo->exec("CREATE TABLE IF NOT EXISTS posts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        location TEXT,
+        price TEXT,
+        description TEXT,
+        images TEXT,
+        created_at TEXT
+    );");
+} catch (Exception $e) {
+    die('Erro de conexão com o banco: ' . htmlspecialchars($e->getMessage()));
 }
 
-// Ações: create, update, delete
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = $_POST['action'] ?? '';
-    if ($action === 'create') {
-        $title = trim($_POST['title'] ?? '');
-        $location = trim($_POST['location'] ?? '');
-        $price = trim($_POST['price'] ?? '');
-        $description = trim($_POST['description'] ?? '');
-
-        $uploaded = handleUploads('images', $uploadsDir, $maxUploadSize);
-        $imgs = implode(',', $uploaded);
-
-        $stmt = $pdo->prepare('INSERT INTO posts (title, location, price, description, images, created_at) VALUES (?, ?, ?, ?, ?, ?)');
-        $stmt->execute([$title, $location, $price, $description, $imgs, date('Y-m-d H:i:s')]);
-        header('Location: post.php');
-        exit;
-    }
-
-    if ($action === 'update') {
-        $id = intval($_POST['id'] ?? 0);
-        $title = trim($_POST['title'] ?? '');
-        $location = trim($_POST['location'] ?? '');
-        $price = trim($_POST['price'] ?? '');
-        $description = trim($_POST['description'] ?? '');
-
-        // pega imagens existentes
-        $stmt = $pdo->prepare('SELECT images FROM posts WHERE id = ?');
-        $stmt->execute([$id]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        $existing = [];
-        if ($row && $row['images']) {
-            $existing = array_filter(array_map('trim', explode(',', $row['images'])));
-        }
-
-        $uploaded = handleUploads('images', $uploadsDir, $maxUploadSize);
-        $all = array_merge($existing, $uploaded);
-        $imgs = implode(',', $all);
-
-        $stmt = $pdo->prepare('UPDATE posts SET title=?, location=?, price=?, description=?, images=? WHERE id=?');
-        $stmt->execute([$title, $location, $price, $description, $imgs, $id]);
-        header('Location: post.php');
-        exit;
-    }
-
-    if ($action === 'delete') {
-        $id = intval($_POST['id'] ?? 0);
-        // Opcional: remover arquivos do servidor (aqui removemos)
-        $stmt = $pdo->prepare('SELECT images FROM posts WHERE id = ?');
-        $stmt->execute([$id]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($row && $row['images']) {
-            $imgs = array_filter(array_map('trim', explode(',', $row['images'])));
-            foreach ($imgs as $im) {
-                $path = __DIR__ . '/' . $im;
-                if (file_exists($path)) @unlink($path);
-            }
-        }
-        $stmt = $pdo->prepare('DELETE FROM posts WHERE id = ?');
-        $stmt->execute([$id]);
-        header('Location: post.php');
-        exit;
-    }
-}
-
-// Busca posts para listar
 $posts = $pdo->query('SELECT * FROM posts ORDER BY created_at DESC')->fetchAll(PDO::FETCH_ASSOC);
-
-// Se estiver editando (via GET ?edit=ID) pega o post
-$editPost = null;
-if (isset($_GET['edit'])) {
-    $id = intval($_GET['edit']);
-    $stmt = $pdo->prepare('SELECT * FROM posts WHERE id = ?');
-    $stmt->execute([$id]);
-    $editPost = $stmt->fetch(PDO::FETCH_ASSOC);
-}
 ?>
 <!doctype html>
 <html lang="pt-br">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Painel de Posts</title>
+  <title>Casas de Temporada — Anúncios</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
-    .card-img-top{height:140px;object-fit:cover}
-    .thumb{width:90px;height:60px;object-fit:cover;border-radius:6px;border:1px solid #ddd}
+    body { padding-top: 70px; }
+    .card-img-top { height: 200px; object-fit: cover; }
+    .whatsapp-fab { position: fixed; right: 18px; bottom: 18px; z-index: 9999; }
+    .carousel-item img { height: 420px; object-fit: cover; width:100%; }
   </style>
 </head>
 <body>
-<nav class="navbar navbar-dark bg-dark">
-  <div class="container-fluid">
-    <span class="navbar-brand">Painel de Anúncios</span>
-    <div class="d-flex align-items-center">
-      <span class="text-light me-3"><?php echo htmlspecialchars($_SESSION['admin_user'] ?? ''); ?></span>
-      <a class="btn btn-outline-light btn-sm me-2" href="adm.php?action=logout">Sair</a>
-      <a class="btn btn-success btn-sm" href="../">Ver site</a>
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
+  <div class="container">
+    <a class="navbar-brand" href="#">Casas de Temporada</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navmenu">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navmenu">
+      <ul class="navbar-nav ms-auto">
+        <li class="nav-item"><a class="nav-link" href="#anuncios">Anúncios</a></li>
+        <li class="nav-item"><a class="nav-link" href="adm.php">Entrar</a></li>
+      </ul>
     </div>
   </div>
 </nav>
 
-<div class="container py-4">
-  <div class="row">
-    <div class="col-lg-5">
-      <div class="card mb-4">
-        <div class="card-body">
-          <h5 class="card-title"><?php echo $editPost ? 'Editar anúncio' : 'Criar novo anúncio'; ?></h5>
-          <form method="post" enctype="multipart/form-data">
-            <?php if ($editPost): ?>
-              <input type="hidden" name="action" value="update">
-              <input type="hidden" name="id" value="<?php echo intval($editPost['id']); ?>">
-            <?php else: ?>
-              <input type="hidden" name="action" value="create">
-            <?php endif; ?>
+<div class="container">
 
-            <div class="mb-2"><label class="form-label">Título</label>
-              <input name="title" class="form-control" required value="<?php echo $editPost ? htmlspecialchars($editPost['title']) : ''; ?>">
-            </div>
-            <div class="mb-2"><label class="form-label">Localização</label>
-              <input name="location" class="form-control" value="<?php echo $editPost ? htmlspecialchars($editPost['location']) : ''; ?>">
-            </div>
-            <div class="mb-2"><label class="form-label">Preço</label>
-              <input name="price" class="form-control" value="<?php echo $editPost ? htmlspecialchars($editPost['price']) : ''; ?>">
-            </div>
-            <div class="mb-2"><label class="form-label">Descrição</label>
-              <textarea name="description" class="form-control" rows="5"><?php echo $editPost ? htmlspecialchars($editPost['description']) : ''; ?></textarea>
-            </div>
-            <div class="mb-2"><label class="form-label">Imagens (múltiplas)</label>
-              <input type="file" name="images[]" multiple class="form-control">
-            </div>
-
-            <?php if ($editPost && !empty($editPost['images'])): 
-              $imgs = array_filter(array_map('trim', explode(',', $editPost['images']))); ?>
-              <div class="mb-2">
-                <label class="form-label">Imagens atuais</label>
-                <div class="d-flex gap-2 flex-wrap">
-                  <?php foreach ($imgs as $im): ?>
-                    <img src="<?php echo htmlspecialchars($im); ?>" class="thumb" alt="">
-                  <?php endforeach; ?>
-                </div>
-              </div>
-            <?php endif; ?>
-
-            <div class="d-grid">
-              <button class="btn <?php echo $editPost ? 'btn-success' : 'btn-primary'; ?>">
-                <?php echo $editPost ? 'Atualizar anúncio' : 'Salvar anúncio'; ?>
-              </button>
-            </div>
-          </form>
+  <!-- Carousel (top 5 posts) -->
+  <?php if (count($posts) > 0): ?>
+  <div id="mainCarousel" class="carousel slide mb-4" data-bs-ride="carousel">
+    <div class="carousel-inner">
+      <?php $active = 'active'; $count = 0; foreach ($posts as $p):
+        $imgs = array_filter(array_map('trim', explode(',', $p['images'])));
+        $img = $imgs[0] ?? 'https://via.placeholder.com/1200x420?text=Sem+imagem';
+      ?>
+      <div class="carousel-item <?php echo $active; ?>">
+        <img src="<?php echo htmlspecialchars($img); ?>" alt="<?php echo htmlspecialchars($p['title']); ?>">
+        <div class="carousel-caption d-none d-md-block bg-dark bg-opacity-50 rounded p-2">
+          <h5><?php echo htmlspecialchars($p['title']); ?></h5>
+          <p><?php echo htmlspecialchars($p['location']); ?> · <?php echo htmlspecialchars($p['price']); ?></p>
         </div>
       </div>
+      <?php $active=''; $count++; if ($count>=5) break; endforeach; ?>
+    </div>
+    <button class="carousel-control-prev" type="button" data-bs-target="#mainCarousel" data-bs-slide="prev">
+      <span class="carousel-control-prev-icon"></span>
+    </button>
+    <button class="carousel-control-next" type="button" data-bs-target="#mainCarousel" data-bs-slide="next">
+      <span class="carousel-control-next-icon"></span>
+    </button>
+  </div>
+  <?php endif; ?>
 
-      <?php if ($editPost): // link para cancelar edição ?>
-        <div class="mb-4">
-          <a href="post.php" class="btn btn-outline-secondary">Cancelar edição</a>
+  <h2 id="anuncios" class="mb-3">Anúncios recentes</h2>
+  <div class="row">
+    <?php if (empty($posts)): ?>
+      <div class="col-12"><div class="alert alert-info">Nenhum anúncio publicado ainda.</div></div>
+    <?php endif; ?>
+
+    <?php foreach ($posts as $p):
+      $imgs = array_filter(array_map('trim', explode(',', $p['images'])));
+      $thumb = $imgs[0] ?? 'https://via.placeholder.com/500x300?text=Sem+imagem';
+    ?>
+    <div class="col-md-4 mb-4">
+      <div class="card h-100 shadow-sm">
+        <img src="<?php echo htmlspecialchars($thumb); ?>" class="card-img-top" alt="">
+        <div class="card-body d-flex flex-column">
+          <h5 class="card-title"><?php echo htmlspecialchars($p['title']); ?></h5>
+          <p class="card-text"><?php echo htmlspecialchars(mb_strimwidth($p['description'],0,120,'...')); ?></p>
+          <p class="mt-auto"><strong><?php echo htmlspecialchars($p['price']); ?></strong></p>
+          <!-- botão abre modal com mais detalhes -->
+          <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modal<?php echo intval($p['id']); ?>">Ver detalhes</button>
+          <a href="https://wa.me/<?php echo $wa_number; ?>?text=<?php echo urlencode('Olá, tenho interesse no anúncio: ' . $p['title']); ?>" target="_blank" class="btn btn-success btn-sm ms-2">WhatsApp</a>
         </div>
-      <?php endif; ?>
+      </div>
     </div>
 
-    <div class="col-lg-7">
-      <h5>Anúncios existentes</h5>
-      <div class="row">
-        <?php foreach ($posts as $p): 
-          $imgs = array_filter(array_map('trim', explode(',', $p['images'])));
-          $thumb = $imgs[0] ?? 'https://via.placeholder.com/500x300?text=Sem+imagem';
-        ?>
-        <div class="col-md-6">
-          <div class="card mb-3 shadow-sm">
-            <img src="<?php echo htmlspecialchars($thumb); ?>" class="card-img-top" alt="">
-            <div class="card-body">
-              <h6 class="card-title"><?php echo htmlspecialchars($p['title']); ?></h6>
-              <p class="card-text"><?php echo htmlspecialchars(mb_strimwidth($p['description'], 0, 70, '...')); ?></p>
-              <p><strong><?php echo htmlspecialchars($p['price']); ?></strong></p>
-              <div class="d-flex gap-2">
-                <a href="?edit=<?php echo intval($p['id']); ?>" class="btn btn-sm btn-outline-primary">Editar</a>
-
-                <form method="post" onsubmit="return confirm('Apagar este anúncio? Esta ação removerá também as imagens.');" style="display:inline">
-                  <input type="hidden" name="action" value="delete">
-                  <input type="hidden" name="id" value="<?php echo intval($p['id']); ?>">
-                  <button class="btn btn-sm btn-outline-danger">Apagar</button>
-                </form>
+    <!-- Modal de detalhes para este post -->
+    <div class="modal fade" id="modal<?php echo intval($p['id']); ?>" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title"><?php echo htmlspecialchars($p['title']); ?></h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+          </div>
+          <div class="modal-body">
+            <?php if (!empty($imgs)): ?>
+              <div id="carouselPost<?php echo intval($p['id']); ?>" class="carousel slide mb-3" data-bs-ride="carousel">
+                <div class="carousel-inner">
+                  <?php $a='active'; foreach ($imgs as $im): ?>
+                  <div class="carousel-item <?php echo $a; ?>">
+                    <img src="<?php echo htmlspecialchars($im); ?>" class="d-block w-100" alt="">
+                  </div>
+                  <?php $a=''; endforeach; ?>
+                </div>
+                <button class="carousel-control-prev" type="button" data-bs-target="#carouselPost<?php echo intval($p['id']); ?>" data-bs-slide="prev">
+                  <span class="carousel-control-prev-icon"></span>
+                </button>
+                <button class="carousel-control-next" type="button" data-bs-target="#carouselPost<?php echo intval($p['id']); ?>" data-bs-slide="next">
+                  <span class="carousel-control-next-icon"></span>
+                </button>
               </div>
-            </div>
+            <?php endif; ?>
+
+            <p><strong>Localização:</strong> <?php echo htmlspecialchars($p['location']); ?></p>
+            <p><strong>Preço:</strong> <?php echo htmlspecialchars($p['price']); ?></p>
+            <p><?php echo nl2br(htmlspecialchars($p['description'])); ?></p>
+          </div>
+          <div class="modal-footer">
+            <a href="https://wa.me/<?php echo $wa_number; ?>?text=<?php echo urlencode('Olá, tenho interesse no anúncio: ' . $p['title']); ?>" target="_blank" class="btn btn-success">Entrar em contato (WhatsApp)</a>
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
           </div>
         </div>
-        <?php endforeach; ?>
       </div>
     </div>
+    <!-- fim modal -->
+
+    <?php endforeach; ?>
   </div>
 </div>
+
+<!-- WhatsApp floating button -->
+<a class="whatsapp-fab" href="https://wa.me/<?php echo $wa_number; ?>" target="_blank">
+  <button class="btn btn-success btn-lg rounded-circle shadow" style="width:64px;height:64px;">
+    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" fill="white" viewBox="0 0 16 16">
+      <path d="M13.601 2.326A7.956 7.956 0 0 0 8.037.001C3.649.001.094 3.556.094 8c0 1.415.371 2.801 1.076 4.02L0 16l3.968-1.041A7.956 7.956 0 0 0 8.037 16C12.424 16 15.979 12.445 15.979 8c0-1.399-.362-2.738-1.0-3.674zM8.037 14.667c-1.35 0-2.626-.366-3.74-1.0l-.27-.153-2.35.617.63-2.29-.17-.28A6.667 6.667 0 1 1 8.037 14.667z"/>
+    </svg>
+  </button>
+</a>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 </body>
