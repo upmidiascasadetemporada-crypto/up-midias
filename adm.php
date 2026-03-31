@@ -101,6 +101,7 @@
 
                             <form id="itemForm" class="grid md:grid-cols-2 gap-4">
                                 <input type="hidden" id="itemEditId" value="">
+
                                 <input type="text" id="itemName" placeholder="Nome do lugar" class="p-3 border rounded-lg" required>
                                 <select id="itemCategory" class="p-3 border rounded-lg bg-white" required></select>
 
@@ -110,7 +111,7 @@
                                     <label class="block text-sm font-medium mb-2">Fotos manuais</label>
                                     <input type="file" id="itemPhotoFiles" accept="image/*" multiple class="w-full p-3 border rounded-lg bg-white">
                                     <p class="text-xs text-gray-500 mt-2">
-                                        Você pode selecionar várias fotos de uma vez. Se estiver editando e não escolher novas fotos, as antigas continuam salvas.
+                                        Aqui você pode selecionar várias fotos ao mesmo tempo. Se estiver editando e não escolher novas fotos, as antigas continuam salvas.
                                     </p>
                                 </div>
 
