@@ -1,112 +1,541 @@
-<?php
-// adm.php
-// Painel de login - cria DB/admin padrão se necessário
-session_start();
-
-// Config
-$dbDir = __DIR__ . '/data';
-$dbFile = $dbDir . '/db.sqlite';
-$defaultAdminUser = 'admin';
-$defaultAdminPass = 'senha123'; // troque após primeiro login
-
-// Garante diretório data e conecta
-if (!is_dir($dbDir)) mkdir($dbDir, 0777, true);
-$pdo = new PDO('sqlite:' . $dbFile);
-$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-
-// Cria tabelas se não existirem
-$pdo->exec("
-CREATE TABLE IF NOT EXISTS admins (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT UNIQUE NOT NULL,
-  password TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS posts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  title TEXT,
-  location TEXT,
-  price TEXT,
-  description TEXT,
-  images TEXT,
-  created_at TEXT
-);
-");
-
-// Insere admin padrão se não existir
-$stmt = $pdo->prepare('SELECT COUNT(*) FROM admins WHERE username = ?');
-$stmt->execute([$defaultAdminUser]);
-if ($stmt->fetchColumn() == 0) {
-    $hash = password_hash($defaultAdminPass, PASSWORD_DEFAULT);
-    $stmt = $pdo->prepare('INSERT INTO admins (username, password) VALUES (?, ?)');
-    $stmt->execute([$defaultAdminUser, $hash]);
-}
-
-// Logout (opcional via GET)
-if (isset($_GET['action']) && $_GET['action'] === 'logout') {
-    session_unset();
-    session_destroy();
-    header('Location: adm.php');
-    exit;
-}
-
-$error = '';
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $user = trim($_POST['username'] ?? '');
-    $pass = $_POST['password'] ?? '';
-
-    if ($user === '' || $pass === '') {
-        $error = 'Informe usuário e senha.';
-    } else {
-        $stmt = $pdo->prepare('SELECT * FROM admins WHERE username = ? LIMIT 1');
-        $stmt->execute([$user]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($row && password_verify($pass, $row['password'])) {
-            $_SESSION['admin_logged_in'] = true;
-            $_SESSION['admin_user'] = $row['username'];
-            header('Location: post.php');
-            exit;
-        } else {
-            $error = 'Usuário ou senha inválidos.';
-        }
-    }
-}
-?>
-<!doctype html>
+<!DOCTYPE html>
 <html lang="pt-br">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Admin - Login</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-  <style>body{height:100vh;display:flex;align-items:center;justify-content:center;background:#f4f6f8;} .card{max-width:420px;width:100%}</style>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Painel Administrativo | Guaratiba Bahia</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
+        body { font-family: 'Poppins', sans-serif; }
+    </style>
 </head>
-<body>
-  <div class="card shadow-sm">
-    <div class="card-body">
-      <h4 class="card-title mb-3">Painel Administrativo</h4>
-      <?php if ($error): ?>
-        <div class="alert alert-danger"><?php echo htmlspecialchars($error); ?></div>
-      <?php endif; ?>
-      <form method="post" action="">
-        <div class="mb-3">
-          <label class="form-label">Usuário</label>
-          <input name="username" class="form-control" required autofocus>
+<body class="bg-gray-50 text-gray-800">
+
+    <main class="min-h-screen pt-10 pb-16">
+        <div class="container mx-auto px-6">
+
+            <div class="flex items-center justify-between gap-4 mb-8 flex-wrap">
+                <div>
+                    <p class="text-sm uppercase tracking-[0.2em] text-blue-600 font-semibold">Área restrita</p>
+                    <h1 class="text-3xl md:text-4xl font-bold">Painel de Controle</h1>
+                </div>
+                <a href="index.html" class="text-blue-600 font-semibold hover:underline">
+                    <i class="fas fa-arrow-left mr-2"></i> Voltar ao site
+                </a>
+            </div>
+
+            <section id="loginBox" class="max-w-md mx-auto bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
+                <h2 class="text-2xl font-bold mb-6 text-center">Entrar</h2>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Usuário</label>
+                        <input type="text" id="admUser" class="w-full p-3 border rounded-lg outline-none focus:ring-2 focus:ring-blue-500" placeholder="admin">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Senha</label>
+                        <input type="password" id="admPass" class="w-full p-3 border rounded-lg outline-none focus:ring-2 focus:ring-blue-500" placeholder="••••••••">
+                    </div>
+                    <button onclick="handleLogin()" class="w-full bg-gray-900 text-white py-3 rounded-lg font-bold hover:bg-gray-800 transition">Entrar</button>
+                </div>
+                <p class="text-xs text-gray-500 mt-4 text-center">
+                    Login padrão: admin / guaratiba2024
+                </p>
+            </section>
+
+            <section id="dashboard" class="hidden">
+                <div class="grid lg:grid-cols-3 gap-6 mt-8">
+                    <div class="lg:col-span-1 space-y-6">
+                        <div class="bg-white p-6 rounded-2xl shadow-md border border-gray-100">
+                            <div class="flex items-center justify-between mb-4">
+                                <h2 class="text-xl font-bold">Categorias</h2>
+                                <span class="text-sm text-gray-500" id="catCount"></span>
+                            </div>
+
+                            <p class="text-sm text-gray-500 mb-4">
+                                Aqui você organiza os lugares por categoria. Exemplo: em <strong>Restaurantes</strong>, adicione Cabana da Lagoa, Cabana do Peixe, etc.
+                            </p>
+
+                            <form id="categoryForm" class="space-y-3">
+                                <input type="hidden" id="categoryEditId" value="">
+                                <input type="text" id="categoryName" placeholder="Nome da categoria" class="w-full p-3 border rounded-lg" required>
+                                <input type="text" id="categorySlug" placeholder="ID/slug (ex: padarias)" class="w-full p-3 border rounded-lg">
+                                <div class="grid grid-cols-2 gap-3">
+                                    <select id="categoryIcon" class="w-full p-3 border rounded-lg bg-white">
+                                        <option value="fa-house">Casa</option>
+                                        <option value="fa-utensils">Restaurante</option>
+                                        <option value="fa-prescription-bottle-medical">Farmácia</option>
+                                        <option value="fa-store">Loja</option>
+                                        <option value="fa-bed">Pousada</option>
+                                        <option value="fa-martini-glass">Evento</option>
+                                        <option value="fa-list">Outro</option>
+                                    </select>
+                                    <select id="categoryColor" class="w-full p-3 border rounded-lg bg-white">
+                                        <option value="blue">Azul</option>
+                                        <option value="orange">Laranja</option>
+                                        <option value="red">Vermelho</option>
+                                        <option value="green">Verde</option>
+                                        <option value="purple">Roxo</option>
+                                        <option value="yellow">Amarelo</option>
+                                        <option value="gray">Cinza</option>
+                                    </select>
+                                </div>
+                                <button type="submit" class="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700">Salvar categoria</button>
+                                <button type="button" onclick="resetCategoryForm()" class="w-full bg-gray-100 text-gray-700 py-3 rounded-lg font-bold hover:bg-gray-200">Limpar</button>
+                            </form>
+
+                            <div class="mt-5 space-y-3" id="categoryList"></div>
+                        </div>
+                    </div>
+
+                    <div class="lg:col-span-2 space-y-6">
+                        <div class="bg-white p-6 rounded-2xl shadow-md border border-gray-100">
+                            <div class="flex items-center justify-between gap-4 mb-4 flex-wrap">
+                                <div>
+                                    <h2 class="text-xl font-bold">Lugares</h2>
+                                    <p class="text-sm text-gray-500">Cadastre cada lugar dentro da categoria correta.</p>
+                                </div>
+                                <span class="text-sm text-gray-500" id="itemCount"></span>
+                            </div>
+
+                            <form id="itemForm" class="grid md:grid-cols-2 gap-4">
+                                <input type="hidden" id="itemEditId" value="">
+                                <input type="text" id="itemName" placeholder="Nome do lugar" class="p-3 border rounded-lg" required>
+                                <select id="itemCategory" class="p-3 border rounded-lg bg-white" required></select>
+
+                                <input type="text" id="itemExtra" placeholder="Preço, especialidade ou horário" class="p-3 border rounded-lg md:col-span-2">
+
+                                <div class="md:col-span-2">
+                                    <label class="block text-sm font-medium mb-2">Fotos manuais</label>
+                                    <input type="file" id="itemPhotoFiles" accept="image/*" multiple class="w-full p-3 border rounded-lg bg-white">
+                                    <p class="text-xs text-gray-500 mt-2">
+                                        Você pode selecionar várias fotos de uma vez. Se estiver editando e não escolher novas fotos, as antigas continuam salvas.
+                                    </p>
+                                </div>
+
+                                <textarea id="itemDesc" placeholder="Descrição curta" class="md:col-span-2 p-3 border rounded-lg h-24"></textarea>
+
+                                <button type="submit" class="md:col-span-2 bg-green-600 text-white py-3 rounded-lg font-bold hover:bg-green-700">Salvar lugar</button>
+                                <button type="button" onclick="resetItemForm()" class="md:col-span-2 bg-gray-100 text-gray-700 py-3 rounded-lg font-bold hover:bg-gray-200">Limpar</button>
+                            </form>
+                        </div>
+
+                        <div class="overflow-x-auto bg-white rounded-2xl shadow-md border border-gray-100">
+                            <table class="w-full text-left">
+                                <thead class="bg-gray-100">
+                                    <tr>
+                                        <th class="p-4">Nome</th>
+                                        <th class="p-4">Categoria</th>
+                                        <th class="p-4">Ações</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="itemTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
         </div>
-        <div class="mb-3">
-          <label class="form-label">Senha</label>
-          <input name="password" type="password" class="form-control" required>
-        </div>
-        <div class="d-grid">
-          <button class="btn btn-primary">Entrar</button>
-        </div>
-      </form>
-      <hr>
-      <small class="text-muted">
-        Usuário padrão: <strong><?php echo $defaultAdminUser; ?></strong> — Senha padrão: <strong><?php echo $defaultAdminPass; ?></strong><br>
-        (Altere a senha após o primeiro login.)
-      </small>
-    </div>
-  </div>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    </main>
+
+    <script>
+        const STORAGE_ITEMS = 'guaratiba_items_v2';
+        const STORAGE_CATEGORIES = 'guaratiba_categories_v2';
+        const ADMIN_USER = 'admin';
+        const ADMIN_PASS = 'guaratiba2024';
+
+        const defaultCategories = [
+            { id: 'casas', name: 'Casas', icon: 'fa-house', color: 'blue' },
+            { id: 'restaurantes', name: 'Restaurantes', icon: 'fa-utensils', color: 'orange' },
+            { id: 'farmacias', name: 'Farmácias', icon: 'fa-prescription-bottle-medical', color: 'red' }
+        ];
+
+        const defaultItems = [
+            {
+                id: 1,
+                categoryId: 'casas',
+                name: 'Casa Brisa do Mar',
+                photos: ['https://images.unsplash.com/photo-1499793983690-e29da59ef1c2?auto=format&fit=crop&w=500&q=80'],
+                extra: 'R$ 450/dia',
+                desc: 'Frente mar com 3 suítes e piscina privativa.',
+                isNew: false
+            },
+            {
+                id: 2,
+                categoryId: 'restaurantes',
+                name: 'Cabana do Peixe',
+                photos: ['https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?auto=format&fit=crop&w=500&q=80'],
+                extra: 'Frutos do Mar',
+                desc: 'A melhor moqueca da região com vista para o pôr do sol.',
+                isNew: false
+            },
+            {
+                id: 3,
+                categoryId: 'farmacias',
+                name: 'Farmácia Central',
+                photos: ['https://images.unsplash.com/photo-1586015555751-63bb77f4322a?auto=format&fit=crop&w=500&q=80'],
+                extra: '08h às 22h',
+                desc: 'Medicamentos e perfumaria no centro de Guaratiba.',
+                isNew: false
+            }
+        ];
+
+        function normalizeCategory(cat) {
+            return {
+                id: cat.id || '',
+                name: cat.name || '',
+                icon: cat.icon || 'fa-list',
+                color: cat.color || 'blue'
+            };
+        }
+
+        function normalizeItem(item) {
+            const photos = Array.isArray(item.photos) && item.photos.length
+                ? item.photos
+                : (item.photo ? [item.photo] : []);
+
+            return {
+                id: item.id,
+                categoryId: item.categoryId || '',
+                name: item.name || '',
+                photos,
+                extra: item.extra || '',
+                desc: item.desc || '',
+                isNew: typeof item.isNew === 'boolean' ? item.isNew : false
+            };
+        }
+
+        function loadCategories() {
+            const saved = JSON.parse(localStorage.getItem(STORAGE_CATEGORIES));
+            if (Array.isArray(saved) && saved.length) return saved.map(normalizeCategory);
+            localStorage.setItem(STORAGE_CATEGORIES, JSON.stringify(defaultCategories));
+            return defaultCategories;
+        }
+
+        function loadItems() {
+            const saved = JSON.parse(localStorage.getItem(STORAGE_ITEMS));
+            if (Array.isArray(saved) && saved.length) return saved.map(normalizeItem);
+            localStorage.setItem(STORAGE_ITEMS, JSON.stringify(defaultItems));
+            return defaultItems;
+        }
+
+        let categories = loadCategories();
+        let items = loadItems();
+
+        function saveAll() {
+            localStorage.setItem(STORAGE_CATEGORIES, JSON.stringify(categories));
+            localStorage.setItem(STORAGE_ITEMS, JSON.stringify(items));
+            renderAll();
+        }
+
+        function handleLogin() {
+            const user = document.getElementById('admUser').value.trim();
+            const pass = document.getElementById('admPass').value.trim();
+
+            if (user === ADMIN_USER && pass === ADMIN_PASS) {
+                sessionStorage.setItem('isLogged', 'true');
+                document.getElementById('loginBox').classList.add('hidden');
+                document.getElementById('dashboard').classList.remove('hidden');
+                renderAll();
+            } else {
+                alert('Acesso negado!');
+            }
+        }
+
+        function resetCategoryForm() {
+            document.getElementById('categoryForm').reset();
+            document.getElementById('categoryEditId').value = '';
+            document.getElementById('categoryIcon').value = 'fa-list';
+            document.getElementById('categoryColor').value = 'blue';
+        }
+
+        function resetItemForm() {
+            document.getElementById('itemForm').reset();
+            document.getElementById('itemEditId').value = '';
+            document.getElementById('itemPhotoFiles').value = '';
+        }
+
+        function normalizeSlug(value) {
+            return String(value || '')
+                .toLowerCase()
+                .trim()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/(^-|-$)/g, '');
+        }
+
+        function getCategoryById(id) {
+            return categories.find(c => c.id === id);
+        }
+
+        function getCategoryColorClasses(color) {
+            const map = {
+                blue: 'bg-blue-100 text-blue-600',
+                orange: 'bg-orange-100 text-orange-600',
+                red: 'bg-red-100 text-red-600',
+                green: 'bg-green-100 text-green-600',
+                purple: 'bg-purple-100 text-purple-600',
+                yellow: 'bg-yellow-100 text-yellow-600',
+                gray: 'bg-gray-100 text-gray-600'
+            };
+            return map[color] || map.blue;
+        }
+
+        function renderCategorySelect() {
+            const select = document.getElementById('itemCategory');
+            select.innerHTML = categories.map(cat => `<option value="${cat.id}">${cat.name}</option>`).join('');
+        }
+
+        function openNewItemForm(categoryId = '') {
+            resetItemForm();
+            if (categoryId) {
+                document.getElementById('itemCategory').value = categoryId;
+            }
+            document.getElementById('itemName').focus();
+            window.scrollTo({ top: document.getElementById('itemForm').offsetTop - 20, behavior: 'smooth' });
+        }
+
+        function renderCategoryList() {
+            const list = document.getElementById('categoryList');
+            document.getElementById('catCount').innerText = `${categories.length} categoria(s)`;
+
+            list.innerHTML = categories.map(cat => {
+                const count = items.filter(i => i.categoryId === cat.id).length;
+                return `
+                    <div class="border rounded-xl p-4">
+                        <div class="flex items-center justify-between gap-3 mb-3">
+                            <div class="flex items-center gap-3 min-w-0">
+                                <div class="w-11 h-11 rounded-full flex items-center justify-center ${getCategoryColorClasses(cat.color)}">
+                                    <i class="fas ${cat.icon || 'fa-list'}"></i>
+                                </div>
+                                <div class="min-w-0">
+                                    <p class="font-semibold truncate">${cat.name}</p>
+                                    <p class="text-xs text-gray-500">${cat.id} • ${count} lugar(ns)</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex flex-wrap gap-2">
+                            <button onclick="openNewItemForm('${cat.id}')" class="bg-green-600 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-green-700">
+                                Adicionar lugar
+                            </button>
+                            <button onclick="editCategory('${cat.id}')" class="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700">
+                                Editar
+                            </button>
+                            <button onclick="deleteCategory('${cat.id}')" class="bg-red-600 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-red-700">
+                                Excluir
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('') || '<p class="text-sm text-gray-500">Nenhuma categoria cadastrada.</p>';
+        }
+
+        function renderItemTable() {
+            const tbody = document.getElementById('itemTableBody');
+            document.getElementById('itemCount').innerText = `${items.length} lugar(ns)`;
+
+            tbody.innerHTML = items.map(item => {
+                const cat = getCategoryById(item.categoryId);
+                return `
+                    <tr class="border-b">
+                        <td class="p-4 font-medium">
+                            ${item.name}
+                            ${item.isNew ? '<span class="ml-2 inline-block text-xs font-bold px-2 py-1 rounded-full bg-red-100 text-red-600">NEW</span>' : ''}
+                        </td>
+                        <td class="p-4 text-sm">${cat ? cat.name : 'Sem categoria'}</td>
+                        <td class="p-4 space-x-2">
+                            <button onclick="editItem(${item.id})" class="text-blue-600 hover:underline">Editar</button>
+                            <button onclick="deleteItem(${item.id})" class="text-red-600 hover:underline">Excluir</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('') || `
+                <tr>
+                    <td class="p-4 text-gray-500" colspan="3">Nenhum lugar cadastrado.</td>
+                </tr>
+            `;
+        }
+
+        function renderAll() {
+            categories = loadCategories();
+            items = loadItems();
+            renderCategorySelect();
+            renderCategoryList();
+            renderItemTable();
+        }
+
+        function readFilesAsDataURLs(files) {
+            const fileArray = Array.from(files || []);
+            return Promise.all(fileArray.map(file => new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = () => reject(new Error('Falha ao ler a imagem.'));
+                reader.readAsDataURL(file);
+            })));
+        }
+
+        document.getElementById('categoryForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+
+            const editId = document.getElementById('categoryEditId').value;
+            const name = document.getElementById('categoryName').value.trim();
+            let id = document.getElementById('categorySlug').value.trim();
+            const icon = document.getElementById('categoryIcon').value;
+            const color = document.getElementById('categoryColor').value;
+
+            if (!name) return alert('Digite o nome da categoria.');
+
+            id = normalizeSlug(id || name);
+            if (!id) return alert('ID inválido.');
+
+            const duplicate = categories.find(c => c.id === id && c.id !== editId);
+            if (duplicate) return alert('Já existe uma categoria com esse ID.');
+
+            if (editId) {
+                const index = categories.findIndex(c => c.id === editId);
+                if (index === -1) return;
+                const oldId = categories[index].id;
+                categories[index] = { id, name, icon, color };
+
+                if (oldId !== id) {
+                    items = items.map(item => item.categoryId === oldId ? { ...item, categoryId: id } : item);
+                }
+            } else {
+                categories.push({ id, name, icon, color });
+            }
+
+            saveAll();
+            resetCategoryForm();
+            alert('Categoria salva com sucesso!');
+        });
+
+        document.getElementById('itemForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            if (!categories.length) {
+                alert('Cadastre pelo menos uma categoria antes de adicionar lugares.');
+                return;
+            }
+
+            const editId = document.getElementById('itemEditId').value;
+            const selectedFiles = document.getElementById('itemPhotoFiles').files;
+            const name = document.getElementById('itemName').value.trim();
+            const categoryId = document.getElementById('itemCategory').value;
+            const extra = document.getElementById('itemExtra').value.trim();
+            const desc = document.getElementById('itemDesc').value.trim();
+
+            if (!name) return alert('Digite o nome do lugar.');
+
+            const oldItem = editId ? items.find(i => i.id === Number(editId)) : null;
+            let photos = [];
+
+            if (selectedFiles && selectedFiles.length) {
+                try {
+                    photos = await readFilesAsDataURLs(selectedFiles);
+                } catch (err) {
+                    alert('Não foi possível ler uma ou mais imagens selecionadas.');
+                    return;
+                }
+            } else if (oldItem && Array.isArray(oldItem.photos)) {
+                photos = oldItem.photos;
+            }
+
+            if (!photos.length) {
+                photos = ['https://via.placeholder.com/600x400?text=Guaratiba'];
+            }
+
+            const newItem = {
+                id: editId ? Number(editId) : Date.now(),
+                categoryId,
+                name,
+                photos,
+                extra,
+                desc,
+                isNew: editId ? (oldItem ? !!oldItem.isNew : false) : true
+            };
+
+            if (editId) {
+                const index = items.findIndex(i => i.id === Number(editId));
+                if (index === -1) return;
+                items[index] = newItem;
+            } else {
+                items.push(newItem);
+            }
+
+            saveAll();
+            resetItemForm();
+            alert('Lugar salvo com sucesso!');
+        });
+
+        function editCategory(id) {
+            const cat = categories.find(c => c.id === id);
+            if (!cat) return;
+
+            document.getElementById('categoryEditId').value = cat.id;
+            document.getElementById('categoryName').value = cat.name;
+            document.getElementById('categorySlug').value = cat.id;
+            document.getElementById('categoryIcon').value = cat.icon || 'fa-list';
+            document.getElementById('categoryColor').value = cat.color || 'blue';
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function deleteCategory(id) {
+            const cat = categories.find(c => c.id === id);
+            if (!cat) return;
+
+            const count = items.filter(i => i.categoryId === id).length;
+            const msg = count
+                ? `A categoria "${cat.name}" tem ${count} lugar(ns). Ao excluir, os lugares também serão removidos. Deseja continuar?`
+                : `Deseja excluir a categoria "${cat.name}"?`;
+
+            if (!confirm(msg)) return;
+
+            categories = categories.filter(c => c.id !== id);
+            items = items.filter(i => i.categoryId !== id);
+            saveAll();
+
+            if (document.getElementById('categoryEditId').value === id) {
+                resetCategoryForm();
+            }
+        }
+
+        function editItem(id) {
+            const item = items.find(i => i.id === id);
+            if (!item) return;
+
+            document.getElementById('itemEditId').value = item.id;
+            document.getElementById('itemName').value = item.name || '';
+            document.getElementById('itemCategory').value = item.categoryId || '';
+            document.getElementById('itemExtra').value = item.extra || '';
+            document.getElementById('itemDesc').value = item.desc || '';
+            document.getElementById('itemPhotoFiles').value = '';
+            window.scrollTo({ top: document.getElementById('itemForm').offsetTop - 20, behavior: 'smooth' });
+        }
+
+        function deleteItem(id) {
+            const item = items.find(i => i.id === id);
+            if (!item) return;
+            if (!confirm(`Deseja excluir o lugar "${item.name}"?`)) return;
+
+            items = items.filter(i => i.id !== id);
+            saveAll();
+
+            if (document.getElementById('itemEditId').value === String(id)) {
+                resetItemForm();
+            }
+        }
+
+        window.addEventListener('load', () => {
+            const logged = sessionStorage.getItem('isLogged') === 'true';
+            if (logged) {
+                document.getElementById('loginBox').classList.add('hidden');
+                document.getElementById('dashboard').classList.remove('hidden');
+                renderAll();
+            }
+        });
+    </script>
 </body>
 </html>
